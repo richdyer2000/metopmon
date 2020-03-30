@@ -76,9 +76,12 @@ def process_tlm(scid, orbit, myaos, mylos, mysqlevt):
     MissingICUReps = "Missing Reports For ICU(s): " + seperator.join(MissingICUReps)
     myvalues = (scid, orbit, myaos, "TM", MissingICUReps, 2)
     metopmon_insert(mysqlevt, myvalues)
-  elif len(MissingICUReps) == 0:
+  elif len(MissingICUReps) == 0 and defrout_pass == 0:
     myvalues = (scid, orbit, myaos, "TM", "All ICU Reports Received", 1)
     metopmon_insert(mysqlevt, myvalues) 
+  elif defrout_pass == 1: 
+    myvalues = (scid, orbit, myaos, "TM", "DEF_ROUT Pass", 1)
+    metopmon_insert(mysqlevt, myvalues)     
 
 def process_tc(scid, orbit, myaos, mylos, mysqlevt):
   #################################################################################################################
