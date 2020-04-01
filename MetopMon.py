@@ -27,7 +27,21 @@ def metopmon_insert(mysqlstmt, myvalues):
   mycursor.execute(mysqlstmt, myvalues)
   myconnection.commit()
   return  
+
+def process_stream(scid, orbit, myaos, mylos, mysqlevt):
+  #################################################################################################################
+  #TM Processing
+  #First check stream status
+  mydb = "g1_events_" + scid.lower() 
+  myvalues = (myaos, mylos, )
+  mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = '" + scid.lower() + "s_nom' AND eventTime BETWEEN DATE_ADD(%s, INTERVAL -5 MINUTE) AND %s"
+  Stream = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
+  if Stream == 0:
+    myvalues = (scid, orbit, myaos, "STREAM", "No Events for this pass - possible Stream Crash", 4)
+    metopmon_insert(mysqlevt, myvalues) 
   
+  return (Stream)
+   
 def process_tlm(scid, orbit, myaos, mylos, mysqlevt):
   #################################################################################################################
   #TM Processing
@@ -44,11 +58,19 @@ def process_tlm(scid, orbit, myaos, mylos, mysqlevt):
     myvalues = (scid, orbit, myaos, "TM", "TM Connection OK", 1)
     metopmon_insert(mysqlevt, myvalues) 
   if StatCon == 0: #No TM Connection to CDA
-    myvalues = (scid, orbit, myaos, "TM", "No TM Connection to CDA", 2)
+    myvalues = (scid, orbit, myaos, "TM", "No TM Connection to CDA", 3)
     metopmon_insert(mysqlevt, myvalues)    
   if StatCon > 0 and TmRx == 0: #TM Connection to CDA, but no TLM Received - potential NO TLM!!   
     myvalues = (scid, orbit, myaos, "TM", "No TM From Spacecraft despite successful connection to CDA", 4)
     metopmon_insert(mysqlevt, myvalues) 
+  
+  TmStatus = StatCon + TmRx
+  
+  return(TmStatus)
+  
+def process_icureports(scid, orbit, myaos, mylos, mysqlevt):  
+  ###################
+  #Then ICU Reports 
   
   defrout_pass = 0
   mydb = "fdfdb"
@@ -60,10 +82,7 @@ def process_tlm(scid, orbit, myaos, mylos, mysqlevt):
   if (anx > defrout_start and anx < defrout_end):
     defrout_pass = 1
     print(scid + " " + str(orbit) + " is a DEF_ROUT Pass")
-  
-  
-  ###################
-  #Then ICU Reports  
+   
   myICUs=["ASCAT", "GOME", "GRAS", "IASI", "MPU", "NIU"]
   myvalues = (myaos, mylos, ) 
   mydb = "g1_tmrep_" + scid.lower()
@@ -168,6 +187,9 @@ def process_sys(scid, orbit, myaos, mylos, mysqlevt):
   elif RRM != 0 or PLSOL != 0 or ESM !=0 :
     myvalues = (scid, orbit, myaos, "SYS", "Critical System Error: PLSOL = " + str(PLSOL) + ", RRM = " + str(RRM) + ", ESM = " + str(ESM), 4)
     metopmon_insert(mysqlevt, myvalues) 
+    
+  sysstat = RRM + PLSOL + ESM
+  return(sysstat)  
 
 def process_ins(scid, orbit, myaos, mylos, mysqlevt):    
   ####################################################################################
@@ -290,15 +312,18 @@ def process_pass(scid, orbit):
   
   #generic SQL Statement to Insert any event
   mysqlevt = "INSERT INTO events (scid, orbit, aos, subsystem, message, criticality) VALUES (%s, %s, %s, %s, %s, %s)"
-
-  process_tlm(scid, orbit, myaos, mylos, mysqlevt)  
-  process_tc(scid, orbit, myaos, mylos, mysqlevt)
+  stream = process_stream(scid, orbit, myaos, mylos, mysqlevt)
   process_pi(scid, orbit, myaos, mylos, mysqlevt) 
-  process_sys(scid, orbit, myaos, mylos, mysqlevt)
-  process_ins(scid, orbit, myaos, mylos, mysqlevt)  
-  process_plm(scid, orbit, myaos, mylos, mysqlevt)  
-  process_svm(scid, orbit, myaos, mylos, mysqlevt)   
-
+  if stream > 0: 
+    tlmstat = process_tlm(scid, orbit, myaos, mylos, mysqlevt)  
+  if stream > 0 and tlmstat > 1:
+    process_tc(scid, orbit, myaos, mylos, mysqlevt)
+    sysstat = process_sys(scid, orbit, myaos, mylos, mysqlevt)
+    process_plm(scid, orbit, myaos, mylos, mysqlevt)  
+    process_svm(scid, orbit, myaos, mylos, mysqlevt)
+  if stream > 0 and tlmstat > 1 and sysstat == 0:    
+    process_ins(scid, orbit, myaos, mylos, mysqlevt)        
+    process_icureports(scid, orbit, myaos, mylos, mysqlevt) 
     
   #############################################################################################################################################
   
