@@ -386,11 +386,11 @@ for mypass in mypasses:
 #    print(str(datetime.datetime.now()) + ": " + scid + " pass " + str(orbit) + " has already been processed") 
 
   if len(mycheckpasses) == 0:
+    
+    complete = 0
     print(str(datetime.datetime.now()) + ": " + scid + " pass " + str(orbit) + " is being processed") 
     try:
       
-      metopmon_insert("INSERT INTO processed_passes (scid, orbit) VALUES (%s, %s)", (scid, orbit))
-    
       #Process each 'system' one at a time. Apply some basic logic - e.g. don't check TLM if stream has died etc.
       stream = process_stream(scid, orbit, anx, aos, los, passtype)
       pi = process_pi(scid, orbit, anx, aos, los, passtype) 
@@ -405,9 +405,11 @@ for mypass in mypasses:
         ins = process_ins(scid, orbit, anx, aos, los, passtype)        
       if stream == 1 and tlm == 1 and sys == 1 and passtype <> "DEF_ROUT":
         icureps = process_icureports(scid, orbit, anx, aos, los, passtype) 
-    
+      complete = 1
     except:
       print(str(datetime.datetime.now()) + ": " + scid + " pass " + str(orbit) + " failed somewhere") 
       metopmon_insert("DELETE FROM processed_passes WHERE scid = %s AND orbit = %s", (scid, orbit))
       metopmon_insert("DELETE FROM events WHERE scid = %s AND orbit = %s", (scid, orbit))      
 
+    if complete == 1:
+      metopmon_insert("INSERT INTO processed_passes (scid, orbit) VALUES (%s, %s)", (scid, orbit))
