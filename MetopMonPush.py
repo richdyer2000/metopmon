@@ -117,7 +117,7 @@ def process_messages(mymessages, criticality):
   
   message = scid + " " + str(orbit) + " " + passtype + " PASS at " + aos.strftime("%d-%b-%Y, %H:%M:%S") + " " + " Overall Criticality: " + str(criticality) + "\n" + message
   
-  if criticality == 2:
+  if criticality <= 2:
     send_alert(message)
   if criticality == 3:
     send_warning(message)      
