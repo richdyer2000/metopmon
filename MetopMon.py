@@ -12,7 +12,23 @@ sys.path.append('/home/pi/')
 
 
 def epsmcf_query(mydb, mysqlstmt, myvalues):
-  myconnection = mysql.connector.connect(host="epsmcf.eumetsat.int", user="richarddyer", passwd="doochuM6", database=mydb)
+  mcfserver = metopmon_query("SELECT * FROM mcf_server LIMIT 1", 0)
+  mcfservername = mcfserver[0][0]
+  mcfusername = mcfserver[0][1]
+  mcfpassword = mcfserver[0][2]
+
+  myconnection = mysql.connector.connect(host=mcfservername, user=mcfusername, passwd=mcfpassword, database=mydb)
+
+  mycursor = myconnection.cursor()
+  if myvalues != 0:
+    mycursor.execute(mysqlstmt, myvalues)
+  if myvalues == 0:
+    mycursor.execute(mysqlstmt)
+  myresult = mycursor.fetchall()
+  return(myresult)
+
+def metopmon_query(mysqlstmt, myvalues):
+  myconnection = mysql.connector.connect(host="localhost", user="metopmon", passwd="metop1", database="metopmon")
   mycursor = myconnection.cursor()
   if myvalues != 0:
     mycursor.execute(mysqlstmt, myvalues)
@@ -27,251 +43,295 @@ def metopmon_insert(mysqlstmt, myvalues):
   mycursor.execute(mysqlstmt, myvalues)
   myconnection.commit()
   return  
+  
+def metopmon_event(myvalues):
+  metopmon_insert("INSERT INTO eventstrial (scid, orbit, passtype, aos, subsystem, message, criticality) VALUES (%s, %s, %s, %s, %s, %s, %s)", myvalues)
+  return    
 
-def process_stream(scid, orbit, myaos, mylos, mysqlevt):
-  #################################################################################################################
-  #TM Processing
-  #First check stream status
-  mydb = "g1_events_" + scid.lower() 
-  myvalues = (myaos, mylos, )
-  mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = '" + scid.lower() + "s_nom' AND eventTime BETWEEN DATE_ADD(%s, INTERVAL -5 MINUTE) AND %s"
-  Stream = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
-  if Stream == 0:
-    myvalues = (scid, orbit, myaos, "STREAM", "No Events for this pass - possible Stream Crash", 4)
-    metopmon_insert(mysqlevt, myvalues) 
+###################################################################
+#First check stream status - just count events between aos and los
+def process_stream(scid, orbit, anx, aos, los, passtype):
+  oknok = 1
   
-  return (Stream)
-   
-def process_tlm(scid, orbit, myaos, mylos, mysqlevt):
-  #################################################################################################################
-  #TM Processing
-  #First check connection status
   mydb = "g1_events_" + scid.lower() 
-  myvalues = (myaos, mylos, )
+  mystream = scid.lower() + "s_nom"
+  myvalues = (mystream, aos, los)
+  mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = %s AND eventTime BETWEEN DATE_ADD(%s, INTERVAL -5 MINUTE) AND %s"
+  stream = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
+
+  if stream == 0:
+    message = "No events for this pass - possible Stream Crash"
+    metopmon_event((scid, orbit, passtype, aos, "STREAM", message, 4)) 
+    oknok = 0
   
-  mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = '" + scid.lower() + "s_nom' AND code = 2110 AND eventTime BETWEEN DATE_ADD(%s, INTERVAL -5 MINUTE) AND %s"
+  return (oknok)
+
+#########################################################
+#TM Processing - check connection and tm reception status   
+def process_tlm(scid, orbit, anx, aos, los, passtype):
+
+  oknok = 1
+  
+  mydb = "g1_events_" + scid.lower() 
+  mystream = scid.lower() + "s_nom"
+  myvalues = (mystream, aos, los)
+  
+  mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = %s AND code = 2110 AND eventTime BETWEEN DATE_ADD(%s, INTERVAL -5 MINUTE) AND %s"
   StatCon = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
-  mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = '" + scid.lower() + "s_nom' AND code = 2111 AND eventTime BETWEEN DATE_ADD(%s, INTERVAL -1 MINUTE) AND %s"
+  mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = %s AND code = 2111 AND eventTime BETWEEN DATE_ADD(%s, INTERVAL -1 MINUTE) AND %s"
   TmRx = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
   
   if StatCon > 0 and TmRx > 0: #TM OK
-    myvalues = (scid, orbit, myaos, "TM", "TM Connection OK", 1)
-    metopmon_insert(mysqlevt, myvalues) 
+    message = "TM Connection OK"
+    metopmon_event((scid, orbit, passtype, aos, "TM", message, 1))
   if StatCon == 0: #No TM Connection to CDA
-    myvalues = (scid, orbit, myaos, "TM", "No TM Connection to CDA", 3)
-    metopmon_insert(mysqlevt, myvalues)    
+    message = "No TM Connection to CDA"
+    metopmon_event((scid, orbit, passtype, aos, "TM", message, 3))
+    oknok = 0
   if StatCon > 0 and TmRx == 0: #TM Connection to CDA, but no TLM Received - potential NO TLM!!   
-    myvalues = (scid, orbit, myaos, "TM", "No TM From Spacecraft despite successful connection to CDA", 4)
-    metopmon_insert(mysqlevt, myvalues) 
+    message = "No TM From Spacecraft despite successful connection to CDA"
+    metopmon_event((scid, orbit, passtype, aos, "TM", message, 4))
+    oknok = 0
+ 
+  return(oknok)
+
+############################################################
+#ICU Reports   
+def process_icureports(scid, orbit, anx, aos, los, passtype):  
   
-  TmStatus = StatCon + TmRx
-  
-  return(TmStatus)
-  
-def process_icureports(scid, orbit, myaos, mylos, mysqlevt):  
-  ###################
-  #Then ICU Reports 
-  
-  defrout_pass = 0
-  mydb = "fdfdb"
-  myvalues = (scid, orbit)
-  mysqlstmt = "SELECT utc FROM events WHERE name = 'ANX' and scid = %s and orbit = %s LIMIT 1"
-  anx = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0].time() 
-  defrout_start = datetime.time(2, 0, 0)
-  defrout_end = datetime.time(3, 41, 0)
-  if (anx > defrout_start and anx < defrout_end):
-    defrout_pass = 1
-    print(scid + " " + str(orbit) + " is a DEF_ROUT Pass")
+  oknok = 1 
    
   myICUs=["ASCAT", "GOME", "GRAS", "IASI", "MPU", "NIU"]
-  myvalues = (myaos, mylos, ) 
+  myvalues = (aos, los, ) 
   mydb = "g1_tmrep_" + scid.lower()
   mysqlstmt = "SELECT Originator_Cal FROM entries WHERE Originator >= 10 AND Reptype = 0 AND SourceStream = 'S' AND ObtUtc BETWEEN %s AND %s"
   myICUReps = epsmcf_query(mydb, mysqlstmt, myvalues)
   MissingICUReps = numpy.setdiff1d(myICUs,myICUReps,assume_unique=False).tolist()
   
-  if len(MissingICUReps) > 0 and defrout_pass == 0:
+  if len(MissingICUReps) > 0:
     seperator = ', '
-    MissingICUReps = "Missing Reports For ICU(s): " + seperator.join(MissingICUReps)
-    myvalues = (scid, orbit, myaos, "TM", MissingICUReps, 2)
-    metopmon_insert(mysqlevt, myvalues)
-  elif len(MissingICUReps) == 0 and defrout_pass == 0:
-    myvalues = (scid, orbit, myaos, "TM", "All ICU Reports Received", 1)
-    metopmon_insert(mysqlevt, myvalues) 
-  elif defrout_pass == 1: 
-    myvalues = (scid, orbit, myaos, "TM", "DEF_ROUT Pass", 1)
-    metopmon_insert(mysqlevt, myvalues)     
+    message = "Missing Reports For ICU(s): " + seperator.join(MissingICUReps)
+    metopmon_event((scid, orbit, passtype, aos, "TM", message, 2))
+    oknok = 0
+  elif len(MissingICUReps) == 0:
+    message = "All ICU Reports Received"
+    metopmon_event((scid, orbit, passtype, aos, "TM", message, 1))
 
-def process_tc(scid, orbit, myaos, mylos, mysqlevt):
-  #################################################################################################################
-  #TC Processing
+  return(oknok)
+
+#######################################################
+#TC Processing
+def process_tc(scid, orbit, anx, aos, los, passtype):
+  
+  oknok = 1   
   
   queuesNumeric = [2, 3]
   queuesAlpha = ["MISSION", "EVENT"]
   
-  for x in queuesNumeric:
+  for queueNumeric in queuesNumeric:
     
-    queueAlpha = queuesAlpha[queuesNumeric.index(x)]
+    queueAlpha = queuesAlpha[queuesNumeric.index(queueNumeric)]
     
-    #Check for queue opening
+    criticality_adjust = 0
+    #Criticality is adjusted depending on the Queue and whether this is an AOCS pass
+    if queueAlpha == "EVENT" and passtype == "AOCS":
+      criticality_adjust = 2
+    if queueAlpha == "EVENT" and passtype != "AOCS":
+      criticality_adjust = 1      
+
+           
+    #Check for queue opening and queue errors
     mydb = "g1_events_" + scid.lower() 
-    myvalues = (myaos, mylos, )
-    mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = '" + scid.lower() + "s_nom' AND code = 2702 AND message LIKE '" + queueAlpha + "%' AND eventTime BETWEEN %s AND %s"
-    QueueOpen = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
-    
-    #Check for queue errors
-    mydb = "g1_events_" + scid.lower() 
-    myvalues = (myaos, mylos, )
-    mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = '" + scid.lower() + "s_nom' AND (code = 2803 OR code = 2809) AND message LIKE '" + queueAlpha + "%' AND eventTime BETWEEN %s AND %s"
-    QueueErrors = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
+    mystream = scid.lower() + "s_nom"
+    myqueue = "%" + queueAlpha + "%"
+
+    myvalues = (mystream, myqueue, aos, los)
+    mysqlstmt_queueOpen = "SELECT COUNT(*) FROM entries WHERE stream = %s AND code = 2702 AND message LIKE %s AND eventTime BETWEEN %s AND %s"
+    mysqlstmt_queueErrors = "SELECT COUNT(*) FROM entries WHERE stream = %s AND (code = 2803 OR code = 2809) AND message LIKE %s AND eventTime BETWEEN %s AND %s"
+    QueueErrors = epsmcf_query(mydb, mysqlstmt_queueErrors, myvalues)[0][0]
+    QueueOpen = epsmcf_query(mydb, mysqlstmt_queueOpen, myvalues)[0][0]
     
     #Check for CV Failures      
-    myvalues = (myaos, mylos, ) 
+    myvalues = (queueNumeric, aos, los) 
     mydb = "g1_tchist_" + scid.lower() 
-    mysqlstmt = "SELECT cv_status FROM commands WHERE queue = " + str(x) + " AND cmd_type <> 10 AND build_send_time BETWEEN %s AND %s"
+    mysqlstmt = "SELECT cv_status FROM commands WHERE queue = %s AND cmd_type <> 10 AND build_send_time BETWEEN %s AND %s"
     myTCs = epsmcf_query(mydb, mysqlstmt, myvalues)
     numTCs = len(myTCs)
     numTCsOK = sum([sum(i) for i in myTCs])
     numTCsNOK = numTCs - numTCsOK
     
     if QueueOpen == 0: #Queue failed to Open
-      myvalues = (scid, orbit, myaos, "TC", queueAlpha + " Queue Failed to Open", x) # Note that criticality = queue (2 for mission, 3 for event)
-      metopmon_insert(mysqlevt, myvalues) 
+      message = queueAlpha + " Queue Failed to Open"
+      metopmon_event((scid, orbit, passtype, aos, "TC", message, 2 + criticality_adjust)) 
+      oknok = 0
+    elif QueueOpen > 0 and (numTCsNOK != 0 or QueueErrors !=0): #Queue opened, but there are errors
+      message = queueAlpha + " Queue " + str(numTCsNOK) + " of " + str(numTCs) +  " TCs failed CV, " + str(QueueErrors) + " Queue Errors"
+      metopmon_event((scid, orbit, passtype, aos, "TC", message, 2 + crtiticality_adjust)) 
+      oknok = 0
     elif QueueOpen > 0 and QueueErrors == 0 and numTCsNOK == 0:
-      myvalues = (scid, orbit, myaos, "TC", queueAlpha + " Queue " + str(numTCsOK) + " TCs successfully released", 1)
-      metopmon_insert(mysqlevt, myvalues) 
-    elif QueueOpen > 0 and (numTCsNOK != 0 or QueueErrors !=0):
-      myvalues = (scid, orbit, myaos, "TC", queueAlpha + " Queue " + str(numTCsNOK) + " TCs failed CV, " + str(QueueErrors) + " Queue Errors", x) # Note that criticality = queue (2 for mission, 3 for event)
-      metopmon_insert(mysqlevt, myvalues) 
- 
-def process_pi(scid, orbit, myaos, mylos, mysqlevt):  
-  #Check for any PI errors in the *last Orbit*
+      if criticality_adjust == 2: criticality_adjust == 1
+      message = queueAlpha + " Queue " + str(numTCsOK) + " TCs successfully released"
+      metopmon_event((scid, orbit, passtype, aos, "TC", message, 1 + criticality_adjust))
+  
+  return(oknok)  
+
+#########################################################
+#Check for any PI errors in the *last Orbit* 
+def process_pi(scid, orbit, anx, aos, los, passtype):  
+
+  oknok = 1
+
   mydb = "g1_events_" + scid.lower() 
-  myvalues = (myaos, myaos, )
-  
-  #Proc Failures
-  mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = '" + scid.lower() + "s_nom' AND code = 2927 AND message LIKE '%_MP_%' AND eventTime BETWEEN DATE_ADD(%s, INTERVAL -102 MINUTE) AND %s"
-  ProcFails = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
-  
-  #Pi Failures
-  mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = '" + scid.lower() + "s_nom' AND code = 2959 AND message LIKE '%_MP_%' AND eventTime BETWEEN DATE_ADD(%s, INTERVAL -102 MINUTE) AND %s"
-  PiFails = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
+  mystream = scid.lower() + "s_nom"
+  myvalues = (mystream, aos, aos)
+  mysqlstmt_ProcFails = "SELECT COUNT(*) FROM entries WHERE stream = %s AND code = 2927 AND message LIKE '%_MP_%' AND eventTime BETWEEN DATE_ADD(%s, INTERVAL -102 MINUTE) AND %s"
+  mysqlstmt_PiFails = "SELECT COUNT(*) FROM entries WHERE stream = %s AND code = 2959 AND message LIKE '%_MP_%' AND eventTime BETWEEN DATE_ADD(%s, INTERVAL -102 MINUTE) AND %s"
+  mysqlstmt_PiCompleted = "SELECT COUNT(*) FROM entries WHERE stream = %s AND code = 2925 AND value = 'COMPLETED' AND eventTime BETWEEN DATE_ADD(%s, INTERVAL -102 MINUTE) AND %s"
+
+  ProcFails = epsmcf_query(mydb, mysqlstmt_ProcFails, myvalues)[0][0]
+  PiFails = epsmcf_query(mydb, mysqlstmt_PiFails, myvalues)[0][0]
+  PiCompleted = epsmcf_query(mydb, mysqlstmt_PiCompleted, myvalues)[0][0]
   
   if ProcFails == 0 and PiFails == 0: 
-    myvalues = (scid, orbit, myaos, "PI", "All MP Procedures OK", 1)
-    metopmon_insert(mysqlevt, myvalues) 
+    message = str(PiCompleted) + " PI Procedures OK"
+    metopmon_event((scid, orbit, passtype, aos, "PI", message, 1))
   elif ProcFails != 0 or PiFails != 0:
-    myvalues = (scid, orbit, myaos, "PI", str(ProcFails) + " MP Procedures Failed Execution, " + str(PiFails) + " Procedures in Activation T/O or Aborted", 1)
-    metopmon_insert(mysqlevt, myvalues) 
+    message = str(ProcFails) + " MP Procedures Failed Execution, " + str(PiFails) + " Procedures in Activation T/O or Aborted, " + str(PiCompleted) + " PI Procedures OK"
+    metopmon_event((scid, orbit, passtype, aos, "PI", message, 1))
+    oknok = 0
+   
+  return (oknok)
 
-def process_sys(scid, orbit, myaos, mylos, mysqlevt):  
-  #Check for any PI errors in the *last Orbit*
+
+#######################################################
+#In 'SYS', we're looking for PLSOL, RRM or ESM
+def process_sys(scid, orbit, anx, aos, los, passtype):  
+  
+  oknok = 1
+  
   mydb = "g1_events_" + scid.lower() 
-  myvalues = (myaos, mylos, )
-
-  #RRM
-  mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = '" + scid.lower() + "s_nom' AND (code = 106 OR code = 107) AND mnemonic = 'MSTE381' AND eventTime BETWEEN %s AND %s"
-  RRM = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
+  mystream = scid.lower() + "s_nom"
+  myvalues = (mystream, aos, los)
+  mysqlstmt_RRM = "SELECT COUNT(*) FROM entries WHERE stream = %s AND (code = 106 OR code = 107) AND mnemonic = 'MSTE381' AND eventTime BETWEEN %s AND %s"
+  mysqlstmt_PLSOL = "SELECT COUNT(*) FROM entries WHERE stream = %s AND (code = 106 OR code = 107) AND mnemonic = 'UZPLM' AND eventTime BETWEEN %s AND %s"
+  mysqlstmt_ESM = "SELECT COUNT(*) FROM entries WHERE stream = %s AND (code = 106 OR code = 107) AND mnemonic = 'UZMODLV' AND eventTime BETWEEN %s AND %s"
   
-  #PLSOL
-  mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = '" + scid.lower() + "s_nom' AND (code = 106 OR code = 107) AND mnemonic = 'UZPLM' AND eventTime BETWEEN %s AND %s"
-  PLSOL = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
+  RRM = epsmcf_query(mydb, mysqlstmt_RRM, myvalues)[0][0]
+  PLSOL = epsmcf_query(mydb, mysqlstmt_PLSOL, myvalues)[0][0]
+  ESM = epsmcf_query(mydb, mysqlstmt_ESM, myvalues)[0][0] 
   
-  #ESM
-  mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = '" + scid.lower() + "s_nom' AND (code = 106 OR code = 107) AND mnemonic = 'UZMODLV' AND eventTime BETWEEN %s AND %s"
-  ESM = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
   
   if RRM == 0 and PLSOL == 0 and ESM == 0: 
-    myvalues = (scid, orbit, myaos, "SYS", "Satellite System OK", 1)
-    metopmon_insert(mysqlevt, myvalues) 
+    message = "Satellite System OK"
+    metopmon_event((scid, orbit, passtype, aos, "SYS", message, 1))
   elif RRM != 0 or PLSOL != 0 or ESM !=0 :
-    myvalues = (scid, orbit, myaos, "SYS", "Critical System Error: PLSOL = " + str(PLSOL) + ", RRM = " + str(RRM) + ", ESM = " + str(ESM), 4)
-    metopmon_insert(mysqlevt, myvalues) 
+    message = "Critical System Error: PLSOL = " + str(PLSOL) + ", RRM = " + str(RRM) + ", ESM = " + str(ESM)
+    metopmon_event((scid, orbit, passtype, aos, "SYS", message, 4))
+    oknok = 0
     
-  sysstat = RRM + PLSOL + ESM
-  return(sysstat)  
+  return(oknok)  
+  
+####################################################################################
+#Loop through ICUs checking for ROOLs or TMREP warnings
+def process_ins(scid, orbit, anx, aos, los, passtype):    
+  
 
-def process_ins(scid, orbit, myaos, mylos, mysqlevt):    
-  ####################################################################################
+  oknok = 1
  
   myICUs=["ASCAT", "GOME", "GRAS", "IASI", "MPU", "NIU"]
   myICUmnems=["BN%", "ON%", "GN%", "EN%", "HN%", "FN%"] 
  
   #Check for ROOLs and TMREP Warnings
-  for x in myICUs:   
+  for myICU in myICUs:   
     
-    ICUerrors = 0
-    
+   
     #ROOLS
-    myICUmnem = myICUmnems[myICUs.index(x)]
+    myICUmnem = myICUmnems[myICUs.index(myICU)]
     mydb = "g1_events_" + scid.lower() 
-    mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = '" + scid.lower() + "s_nom' AND (code = 106 OR code = 107) AND mnemonic LIKE '" + myICUmnem + "' AND eventTime BETWEEN %s AND %s"
-    myvalues = (myaos, mylos)
+    mystream = scid.lower() + "s_nom"
+    mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = %s AND (code = 106 OR code = 107) AND mnemonic LIKE %s AND eventTime BETWEEN %s AND %s"
+    myvalues = (mystream, myICUmnem, aos, los)
     Rools = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
 
     #TMREP Warnings
     mydb = "g1_tmrep_" + scid.lower() 
-    mysqlstmt = "SELECT COUNT(*) FROM entries WHERE Originator_Cal = '" + x + "' AND (Reptype = 2 OR Reptype = 4 OR Reptype = 6 OR Reptype = 14) AND ConstructUtc BETWEEN %s AND %s"
-    myvalues = (myaos, mylos)
+    mysqlstmt = "SELECT COUNT(*) FROM entries WHERE Originator_Cal = %s AND (Reptype = 2 OR Reptype = 4 OR Reptype = 6 OR Reptype = 14) AND ConstructUtc BETWEEN %s AND %s"
+    myvalues = (myICU, aos, los)
     TmrepWrn = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
 
 
-    if TmrepWrn + Rools <> 0:
-      ICUerrors = ICUerrors + 1
-      myvalues = (scid, orbit, myaos, "INS", x + ": " + str(Rools) + " RED OOLs, " + str(TmrepWrn) + " TMREP Warnings" , 3)
-      metopmon_insert(mysqlevt, myvalues)
+    if TmrepWrn <> 0 or Rools <> 0:
+      message = myICU + ": " + str(Rools) + " RED OOLs, " + str(TmrepWrn) + " TMREP Warnings"
+      metopmon_event((scid, orbit, passtype, aos, "INS", message, 3))
+      oknok = 0
 
-  if ICUerrors == 0:
-    myvalues = (scid, orbit, myaos, "INS", "No RED OOLs or TMREP Warnings" , 1)
-    metopmon_insert(mysqlevt, myvalues)
+  if oknok == 1:
+    message = "No RED OOLs or TMREP Warnings"
+    metopmon_event((scid, orbit, passtype, aos, "INS", message, 1))
 
-def process_plm(scid, orbit, myaos, mylos, mysqlevt):
+  return (oknok)
+
+####################################################################################
+#Check PLM for ROOLs or TMREP warnings
+def process_plm(scid, orbit, anx, aos, los, passtype):
+  
+  oknok = 1
   
   #Red OOLs
   mydb = "g1_events_" + scid.lower() 
-  mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = '" + scid.lower() + "s_nom' AND (code = 106 OR code = 107) AND mnemonic LIKE 'LN%' AND eventTime BETWEEN %s AND %s"
-  myvalues = (myaos, mylos)
+  mystream = scid.lower() + "s_nom"
+  mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = %s AND (code = 106 OR code = 107) AND mnemonic LIKE 'LN%' AND eventTime BETWEEN %s AND %s"
+  myvalues = (mystream, aos, los)
   Rools = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
    
   #TMREP Warnings
   mydb = "g1_tmrep_" + scid.lower() 
   mysqlstmt = "SELECT COUNT(*) FROM entries WHERE Originator_Cal = 'PLM' AND (Reptype = 1 OR Reptype = 3) AND ConstructUtc BETWEEN %s AND %s"
-  myvalues = (myaos, mylos)
+  myvalues = (aos, los)
   TmrepWrn = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
 
   if TmrepWrn + Rools <> 0:
-    myvalues = (scid, orbit, myaos, "PLM", str(Rools) + " RED OOLs, " + str(TmrepWrn) + " TMREP Warnings" , 3)
-    metopmon_insert(mysqlevt, myvalues)
-    
+    message = str(Rools) + " RED OOLs, " + str(TmrepWrn) + " TMREP Warnings"
+    metopmon_event((scid, orbit, passtype, aos, "PLM",  message, 3))
+    oknok = 0
   if TmrepWrn + Rools == 0:
-    myvalues = (scid, orbit, myaos, "PLM", "No RED OOLs or TMREP Warnings" , 1)
-    metopmon_insert(mysqlevt, myvalues)
+    message = "No RED OOLs or TMREP Warnings"
+    metopmon_event((scid, orbit, passtype, aos, "PLM", message, 1))
 
-def process_svm(scid, orbit, myaos, mylos, mysqlevt):
+  return (oknok)
+  
+#########################################################  
+#Check SVM for Functional Assemplies and TMREP Warnings
+def process_svm(scid, orbit, anx, aos, los, passtype):
+  
+  oknok = 1
 
   #Functional Assemblies
   mydb = "g1_events_" + scid.lower() 
-  mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = '" + scid.lower() + "s_nom' AND (code = 106 OR code = 107) AND (mnemonic LIKE 'USEF%' OR mnemonic = 'USSADEPL' OR mnemonic Like 'ISCNFUR%') AND eventTime BETWEEN %s AND %s"
-  myvalues = (myaos, mylos)
+  mystream = scid.lower() + "s_nom"
+  mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = %s AND (code = 106 OR code = 107) AND (mnemonic LIKE 'USEF%' OR mnemonic = 'USSADEPL' OR mnemonic Like 'ISCNFUR%') AND eventTime BETWEEN %s AND %s"
+  myvalues = (mystream, aos, los)
   Fassies = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]  
 
-    
+  ###############  
   #TANM1 Warnings
   mydb = "g1_tmrep_" + scid.lower() 
   mysqlstmt = "SELECT COUNT(*) FROM entries WHERE Originator_Cal = 'SVM' AND Reptype = 0 AND ConstructUtc BETWEEN %s AND %s"
-  myvalues = (myaos, mylos)
+  myvalues = (aos, los)
   TANM1 = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
+  
+  ###############
   #TANM2 Warnings
   mydb = "g1_tmrep_" + scid.lower() 
   mysqlstmt = "SELECT COUNT(*) FROM entries WHERE Originator_Cal = 'SVM' AND Reptype = 1 AND ConstructUtc BETWEEN %s AND %s"
-  myvalues = (myaos, mylos)
+  myvalues = (aos, los)
   TANM2 = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
   
   #################
   #TVRPM Warnings
   mydb = "g1_tmrep_" + scid.lower() 
   mysqlstmt = "SELECT COUNT(*) FROM entries WHERE Originator_Cal = 'SVM' AND Reptype = 3 AND Subtype = 1 AND ConstructUtc BETWEEN %s AND %s"
-  myvalues = (myaos, mylos)
+  myvalues = (aos, los)
   TVRPM = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
   
   ##################
@@ -279,94 +339,75 @@ def process_svm(scid, orbit, myaos, mylos, mysqlevt):
   TEXTR_WHITELIST = 0
   mydb = "g1_tmrep_" + scid.lower() 
   mysqlstmt = "SELECT COUNT(*) FROM entries WHERE Originator_Cal = 'SVM' AND Reptype = 5 AND (Subtype = 1 OR Subtype = 2 OR Subtype = 3) AND ConstructUtc BETWEEN %s AND %s"
-  myvalues = (myaos, mylos)
+  myvalues = (aos, los)
   TEXTR = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
   #Find Wite Listed Errors
   if scid.lower() == 'm03':
     mydb = "g1_tmrep_" + scid.lower() 
     mysqlstmt = "SELECT COUNT(*) FROM entries WHERE Originator_Cal = 'SVM' AND Reptype = 5 AND Subtype = 1 AND Paramid_Cal = 'AUBNR' AND ConstructUtc BETWEEN %s AND %s"
-    myvalues = (myaos, mylos)
+    myvalues = (aos, los)
     TEXTR_WHITELIST = TEXTR_WHITELIST + epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
   TEXTR = TEXTR - TEXTR_WHITELIST
 
   if Fassies <> 0:
-    myvalues = (scid, orbit, myaos, "SVM", "Reconfigurations on " + str(Fassies) + " Functional Assemblies" , 4)
-    metopmon_insert(mysqlevt, myvalues)
+    message = "Reconfigurations on " + str(Fassies) + " Functional Assemblies" 
+    metopmon_event((scid, orbit, passtype, aos, "SVM", message, 4))
+    oknok = 0
   if TANM1 <> 0 or TANM2 <> 0 or TVRPM <> 0 or TEXTR <> 0:
-    myvalues = (scid, orbit, myaos, "SVM", "TMREP Warnings: TANM1 " + str(TANM1) + ", TANM2 " + str(TANM2) + ", TVRPM " + str(TVRPM) + ", TEXTR " + str(TEXTR) , 3)
-    metopmon_insert(mysqlevt, myvalues)
+    message = "TMREP Warnings: TANM1 " + str(TANM1) + ", TANM2 " + str(TANM2) + ", TVRPM " + str(TVRPM) + ", TEXTR " + str(TEXTR) 
+    metopmon_event((scid, orbit, passtype, aos, "SVM", message, 3))
+    oknok = 0
   if Fassies == 0 and TANM1 == 0 and TANM2 == 0 and TVRPM == 0 and TEXTR == 0:
-    myvalues = (scid, orbit, myaos, "SVM", "No RED OOLs or TMREP Warnings" , 1)
-    metopmon_insert(mysqlevt, myvalues)
+    message = "No RED OOLs or TMREP Warnings"
+    metopmon_event((scid, orbit, passtype, aos, "SVM", message, 1))
 
-      
-def process_pass(scid, orbit):
-  print(scid + " pass " + str(orbit) + " is being processed.....") 
-  
-  #get aos & los time of this pass and use aos as timestamp
-  mysqlstmt = "SELECT utc FROM events WHERE scid = %s AND orbit = %s AND target = 'CDA' and extra = 'CONSTANT_0' ORDER BY utc ASC"
-  myvalues = (scid, orbit, )
-  mytimes = epsmcf_query("fdfdb", mysqlstmt, myvalues)
-  myaos = mytimes[0][0]
-  mylos = mytimes[1][0]
-  
-  #generic SQL Statement to Insert any event
-  mysqlevt = "INSERT INTO events (scid, orbit, aos, subsystem, message, criticality) VALUES (%s, %s, %s, %s, %s, %s)"
-  stream = process_stream(scid, orbit, myaos, mylos, mysqlevt)
-  process_pi(scid, orbit, myaos, mylos, mysqlevt) 
-  if stream > 0: 
-    tlmstat = process_tlm(scid, orbit, myaos, mylos, mysqlevt)  
-  if stream > 0 and tlmstat > 1:
-    process_tc(scid, orbit, myaos, mylos, mysqlevt)
-    sysstat = process_sys(scid, orbit, myaos, mylos, mysqlevt)
-    process_plm(scid, orbit, myaos, mylos, mysqlevt)  
-    process_svm(scid, orbit, myaos, mylos, mysqlevt)
-  if stream > 0 and tlmstat > 1 and sysstat == 0:    
-    process_ins(scid, orbit, myaos, mylos, mysqlevt)        
-    process_icureports(scid, orbit, myaos, mylos, mysqlevt) 
-    
-  #############################################################################################################################################
-  
-
-
+  return (oknok)
   
   
-    
+##############################################################################################################
+#### MAIN LOOP - GET LIST OF PASSES IN LAST ORBIT, THEN FOR EACH PASS CHECK WHETHER IT HAS BEEN PROCESSED ####
+##############################################################################################################
 
-#Get the list of passes to be processed. A pass can only be processed if the LOS time is at least 15 minutes in the past and we should check 101 minutes worth (= 1 orbit)
+mypasses = metopmon_query("SELECT * FROM passes WHERE los BETWEEN DATE_ADD(NOW(), INTERVAL - 116 MINUTE) AND DATE_ADD(NOW(), INTERVAL -15 MINUTE)", 0)
+#mypasses = metopmon_query("SELECT * FROM passes WHERE los < DATE_ADD(NOW(), INTERVAL -15 MINUTE)",0)
 
-myconnection = mysql.connector.connect(host="localhost", user="metopmon", passwd="metop1", database="metopmon")
-mycursor = myconnection.cursor() 
-#mycursor.execute("TRUNCATE events")
-#myconnection.commit()
-#mycursor.execute("TRUNCATE processed_passes")
-#myconnection.commit()
 
-mysqlstmt = "SELECT scid, orbit FROM events WHERE (scid = 'M01' OR scid = 'M02' OR scid = 'M03') AND name = 'STAT_LOS' AND target = 'CDA' AND extra = 'CONSTANT_0' AND utc BETWEEN DATE_ADD(NOW(), INTERVAL - 116 MINUTE) AND DATE_ADD(NOW(), INTERVAL -15 MINUTE) LIMIT 100"
-myvalues = 0
-mypasses = epsmcf_query("fdfdb", mysqlstmt, myvalues)
+for mypass in mypasses:
 
-#Go through the list of passes and check whether they have already been processed
-for row in mypasses:
+  scid = mypass[0]
+  orbit = mypass[1]
+  anx = mypass[2]
+  aos = mypass[3]
+  los = mypass[4]
+  passtype = mypass[5]
 
-  scid = row[0]
-  orbit = row[1]
-
-  myconnection = mysql.connector.connect(host="localhost", user="metopmon", passwd="metop1", database="metopmon")
-  mycursor = myconnection.cursor() 
-  mysqlstmt = "SELECT scid, orbit FROM processed_passes where scid = %s and orbit = %s"
-  myvalues = (scid, orbit, )
-  mycursor.execute(mysqlstmt, myvalues)
-  mycheckpasses = mycursor.fetchall()
+  mycheckpasses = metopmon_query("SELECT scid, orbit FROM processed_passestrial where scid = %s and orbit = %s", (scid, orbit))
   
   if len(mycheckpasses) > 0:
     print(scid + " pass " + str(orbit) + " has already been processed") 
 
   if len(mycheckpasses) == 0:
-    mysqlstmt = "INSERT INTO processed_passes (scid, orbit) VALUES (%s, %s)" 
-    myvalues = (scid, orbit, ) 
-    metopmon_insert(mysqlstmt, myvalues)
-    process_pass(scid, orbit)
- 
-
+    try:
+      print(scid + " pass " + str(orbit) + " is being processed") 
+      metopmon_insert("INSERT INTO processed_passestrial (scid, orbit) VALUES (%s, %s)", (scid, orbit))
+    
+      #Process each 'system' one at a time. Apply some basic logic - e.g. don't check TLM if stream has died etc.
+      stream = process_stream(scid, orbit, anx, aos, los, passtype)
+      pi = process_pi(scid, orbit, anx, aos, los, passtype) 
+      if stream == 1:
+        tlm = process_tlm(scid, orbit, anx, aos, los, passtype)  
+      if stream == 1 and tlm == 1:
+        tc = process_tc(scid, orbit, anx, aos, los, passtype)
+        sys = process_sys(scid, orbit, anx, aos, los, passtype)
+      if stream == 1 and tlm == 1 and sys == 1:
+        plm = process_plm(scid, orbit, anx, aos, los, passtype)  
+        svm = process_svm(scid, orbit, anx, aos, los, passtype)
+        ins = process_ins(scid, orbit, anx, aos, los, passtype)        
+      if stream == 1 and tlm == 1 and sys == 1 and passtype <> "DEF_ROUT":
+        icureps = process_icureports(scid, orbit, anx, aos, los, passtype) 
+    
+    except:
+      print(scid + " pass " + str(orbit) + " failed somewhere") 
+      metopmon_insert("DELETE FROM processed_passestrial WHERE scid = %s AND orbit = %s", (scid, orbit))
+      metopmon_insert("DELETE FROM eventstrial WHERE scid = %s AND orbit = %s", (scid, orbit))      
 

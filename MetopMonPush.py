@@ -28,7 +28,7 @@ def metopmon_read(mysqlstmt, myvalues):
 
 def send_info (message):
   #This will send a low priority warning to all SOMs
-  mySOMs = metopmon_read("SELECT * FROM pushover_keys WHERE role = 'SOM'", 0)
+  mySOMs = metopmon_read("SELECT * FROM pushover_keys WHERE role = 'KOM'", 0)
   
   for i in mySOMs:
     conn = httplib.HTTPSConnection("api.pushover.net:443")
@@ -61,7 +61,7 @@ def send_alert (message):
 
 def send_warning (message):
   #This will send a low priority warning to all SOMs
-  mySOMs = metopmon_read("SELECT * FROM pushover_keys WHERE role = 'SOM'", 0)
+  mySOMs = metopmon_read("SELECT * FROM pushover_keys WHERE role = 'KOM'", 0)
   
   for i in mySOMs:
     conn = httplib.HTTPSConnection("api.pushover.net:443")
@@ -77,7 +77,7 @@ def send_warning (message):
     
 def send_critical (message):
   #This will send a critical warning to all SOMs
-  mySOMs = metopmon_read("SELECT * FROM pushover_keys WHERE role = 'SOM'", 0)
+  mySOMs = metopmon_read("SELECT * FROM pushover_keys WHERE role = 'KOM'", 0)
   
   for i in mySOMs:
     conn = httplib.HTTPSConnection("api.pushover.net:443")
