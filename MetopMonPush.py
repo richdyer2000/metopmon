@@ -143,7 +143,8 @@ for i in passes_to_notify:
   mysqlstmt = "Select scid, orbit, passtype, aos, subsystem, message, criticality FROM events WHERE scid = %s AND orbit = %s"
   myvalues = (scid, orbit)
   mymessages = metopmon_read(mysqlstmt, myvalues)
-   
+  
+  passtype = mymessages[0][2]  
   #determine the max criticality
   criticality = 1
   for i in mymessages:
@@ -151,7 +152,7 @@ for i in passes_to_notify:
     criticality = i[6]
   
   #send a message if criticality > 1
-  if criticality > 1:
+  if criticality > 1 or passtype == "AOCS":
     process_messages(mymessages, criticality)
 
   

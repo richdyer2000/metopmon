@@ -133,11 +133,9 @@ def process_tc(scid, orbit, anx, aos, los, passtype):
     queueAlpha = queuesAlpha[queuesNumeric.index(queueNumeric)]
     
     critical_adjust = 0
-    noncritical_adjust = 0
     #Criticality is adjusted depending on the Queue and whether this is an AOCS pass
     if queueAlpha == "EVENT" and passtype == "AOCS":
       critical_adjust = 2
-      noncritical_adjust = 1
     if queueAlpha == "EVENT" and passtype != "AOCS":
       critical_adjust = 1      
 
@@ -172,7 +170,7 @@ def process_tc(scid, orbit, anx, aos, los, passtype):
       oknok = 0
     elif QueueOpen > 0 and QueueErrors == 0 and numTCsNOK == 0:
       message = queueAlpha + " Queue " + str(numTCsOK) + " TCs successfully released"
-      metopmon_event((scid, orbit, passtype, aos, "TC", message, 1 + noncritical_adjust))
+      metopmon_event((scid, orbit, passtype, aos, "TC", message, 1))
   
   return(oknok)  
 
