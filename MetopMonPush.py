@@ -28,7 +28,7 @@ def metopmon_read(mysqlstmt, myvalues):
 
 def send_info (message):
   #This will send a low priority warning to all SOMs
-  mySOMs = metopmon_read("SELECT * FROM pushover_keys WHERE role = 'KOM'", 0)
+  mySOMs = metopmon_read("SELECT * FROM pushover_keys WHERE role = 'SOM'", 0)
   
   for i in mySOMs:
     conn = httplib.HTTPSConnection("api.pushover.net:443")
@@ -61,7 +61,7 @@ def send_alert (message):
 
 def send_warning (message):
   #This will send a low priority warning to all SOMs
-  mySOMs = metopmon_read("SELECT * FROM pushover_keys WHERE role = 'KOM'", 0)
+  mySOMs = metopmon_read("SELECT * FROM pushover_keys WHERE role = 'SOM'", 0)
   
   for i in mySOMs:
     conn = httplib.HTTPSConnection("api.pushover.net:443")
@@ -77,7 +77,7 @@ def send_warning (message):
     
 def send_critical (message):
   #This will send a critical warning to all SOMs
-  mySOMs = metopmon_read("SELECT * FROM pushover_keys WHERE role = 'KOM'", 0)
+  mySOMs = metopmon_read("SELECT * FROM pushover_keys WHERE role = 'SOM'", 0)
   
   for i in mySOMs:
     conn = httplib.HTTPSConnection("api.pushover.net:443")
@@ -93,34 +93,36 @@ def send_critical (message):
       }), { "Content-type": "application/x-www-form-urlencoded" })
     conn.getresponse()
 
-def process_messages(mymessages, criticality, aocs_pass): 
+def process_messages(mymessages, criticality): 
 
   scid = mymessages[0][0]
   orbit = mymessages[0][1]
-  aos = mymessages[0][2]
+  passtype = mymessages[0][2]
+  aos = mymessages[0][3]
   
   message = ""
   count = 0
   carriage_return = ""
+ 
+
+  for mymessage in mymessages:
+    #determining whether carriage return is needed
+    mysubsystem = mymessage[4]
+    mycriticality = mymessage[6]
+    mytext = mymessage[5] 
+    
+    if count > 0: carriage_return = "\n"   
+    count = count + 1    
+    message = message + carriage_return + mysubsystem + " criticality " + str(mycriticality) + ": " + mytext
   
-  if criticality == 1 and aocs_pass == 1:
-    message = scid + " " + str(orbit) + " " + aos.strftime("%d-%b-%Y, %H:%M:%S") + " " + " AOCS Pass Without Errors"
-    send_info(message)
-  elif criticality > 1:
-    for i in mymessages:
-      #determining whether carriage return is needed
-      if count > 0:
-        carriage_return = "\n"   
-      count = count + 1    
-      message = message + carriage_return + i[3] + " criticality " + str(i[5]) + ": " + i[4]
-    message = scid + " " + str(orbit) + " " + aos.strftime("%d-%b-%Y, %H:%M:%S") + " " + " Overall Criticality: " + str(criticality) + "\n" + message
+  message = scid + " " + str(orbit) + " " + passtype + " PASS at " + aos.strftime("%d-%b-%Y, %H:%M:%S") + " " + " Overall Criticality: " + str(criticality) + "\n" + message
   
-    if criticality == 2:
-      send_alert(message)
-    if criticality == 3:
-      send_warning(message)      
-    elif criticality == 4:
-      send_critical(message)
+  if criticality == 2:
+    send_alert(message)
+  if criticality == 3:
+    send_warning(message)      
+  elif criticality == 4:
+    send_critical(message)
     
   print(message)  
   
@@ -138,28 +140,18 @@ for i in passes_to_notify:
   metopmon_insert(mysqlstmt, myvalues)
 
   #Get All the Messages for this Orbit
-  mysqlstmt = "Select * FROM events WHERE scid = %s AND orbit = %s"
+  mysqlstmt = "Select scid, orbit, passtype, aos, subsystem, message, criticality FROM events WHERE scid = %s AND orbit = %s"
   myvalues = (scid, orbit)
   mymessages = metopmon_read(mysqlstmt, myvalues)
-  
-  #determine whether this is an aocs pass
-  aocs_pass = 0
-  aos = mymessages[0][2].time()
-  morning_aocs_start = datetime.time(9, 30, 0)
-  morning_aocs_end = datetime.time(11, 10, 0)
-  evening_aocs_start = datetime.time(21, 30, 0)
-  evening_aocs_end = datetime.time(23, 10, 0)
-  if (aos > morning_aocs_start and aos < morning_aocs_end) or (aos > evening_aocs_start and aos < evening_aocs_end):
-    aocs_pass = 1
-    
+   
   #determine the max criticality
   criticality = 1
   for i in mymessages:
-   if i[5] > criticality:
-    criticality = i[5]
+   if i[6] > criticality:
+    criticality = i[6]
   
-  #send a message if its an aocs pass or
-  if aocs_pass == 1 or criticality > 1:
-    process_messages(mymessages, criticality, aocs_pass)
+  #send a message if criticality > 1
+  if criticality > 1:
+    process_messages(mymessages, criticality)
 
   

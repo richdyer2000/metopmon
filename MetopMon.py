@@ -45,7 +45,7 @@ def metopmon_insert(mysqlstmt, myvalues):
   return  
   
 def metopmon_event(myvalues):
-  metopmon_insert("INSERT INTO eventstrial (scid, orbit, passtype, aos, subsystem, message, criticality) VALUES (%s, %s, %s, %s, %s, %s, %s)", myvalues)
+  metopmon_insert("INSERT INTO events (scid, orbit, passtype, aos, subsystem, message, criticality) VALUES (%s, %s, %s, %s, %s, %s, %s)", myvalues)
   return    
 
 ###################################################################
@@ -132,12 +132,14 @@ def process_tc(scid, orbit, anx, aos, los, passtype):
     
     queueAlpha = queuesAlpha[queuesNumeric.index(queueNumeric)]
     
-    criticality_adjust = 0
+    critical_adjust = 0
+    noncritical_adjust = 0
     #Criticality is adjusted depending on the Queue and whether this is an AOCS pass
     if queueAlpha == "EVENT" and passtype == "AOCS":
-      criticality_adjust = 2
+      critical_adjust = 2
+      noncritical_adjust = 1
     if queueAlpha == "EVENT" and passtype != "AOCS":
-      criticality_adjust = 1      
+      critical_adjust = 1      
 
            
     #Check for queue opening and queue errors
@@ -162,16 +164,15 @@ def process_tc(scid, orbit, anx, aos, los, passtype):
     
     if QueueOpen == 0: #Queue failed to Open
       message = queueAlpha + " Queue Failed to Open"
-      metopmon_event((scid, orbit, passtype, aos, "TC", message, 2 + criticality_adjust)) 
+      metopmon_event((scid, orbit, passtype, aos, "TC", message, 2 + critical_adjust)) 
       oknok = 0
     elif QueueOpen > 0 and (numTCsNOK != 0 or QueueErrors !=0): #Queue opened, but there are errors
       message = queueAlpha + " Queue " + str(numTCsNOK) + " of " + str(numTCs) +  " TCs failed CV, " + str(QueueErrors) + " Queue Errors"
-      metopmon_event((scid, orbit, passtype, aos, "TC", message, 2 + crtiticality_adjust)) 
+      metopmon_event((scid, orbit, passtype, aos, "TC", message, 2 + critical_adjust)) 
       oknok = 0
     elif QueueOpen > 0 and QueueErrors == 0 and numTCsNOK == 0:
-      if criticality_adjust == 2: criticality_adjust == 1
       message = queueAlpha + " Queue " + str(numTCsOK) + " TCs successfully released"
-      metopmon_event((scid, orbit, passtype, aos, "TC", message, 1 + criticality_adjust))
+      metopmon_event((scid, orbit, passtype, aos, "TC", message, 1 + noncritical_adjust))
   
   return(oknok)  
 
@@ -381,15 +382,16 @@ for mypass in mypasses:
   los = mypass[4]
   passtype = mypass[5]
 
-  mycheckpasses = metopmon_query("SELECT scid, orbit FROM processed_passestrial where scid = %s and orbit = %s", (scid, orbit))
+  mycheckpasses = metopmon_query("SELECT scid, orbit FROM processed_passes where scid = %s and orbit = %s", (scid, orbit))
   
-  if len(mycheckpasses) > 0:
-    print(scid + " pass " + str(orbit) + " has already been processed") 
+#  if len(mycheckpasses) > 0:
+#    print(str(datetime.datetime.now()) + ": " + scid + " pass " + str(orbit) + " has already been processed") 
 
   if len(mycheckpasses) == 0:
+    print(str(datetime.datetime.now()) + ": " + scid + " pass " + str(orbit) + " is being processed") 
     try:
-      print(scid + " pass " + str(orbit) + " is being processed") 
-      metopmon_insert("INSERT INTO processed_passestrial (scid, orbit) VALUES (%s, %s)", (scid, orbit))
+      
+      metopmon_insert("INSERT INTO processed_passes (scid, orbit) VALUES (%s, %s)", (scid, orbit))
     
       #Process each 'system' one at a time. Apply some basic logic - e.g. don't check TLM if stream has died etc.
       stream = process_stream(scid, orbit, anx, aos, los, passtype)
@@ -407,7 +409,7 @@ for mypass in mypasses:
         icureps = process_icureports(scid, orbit, anx, aos, los, passtype) 
     
     except:
-      print(scid + " pass " + str(orbit) + " failed somewhere") 
-      metopmon_insert("DELETE FROM processed_passestrial WHERE scid = %s AND orbit = %s", (scid, orbit))
-      metopmon_insert("DELETE FROM eventstrial WHERE scid = %s AND orbit = %s", (scid, orbit))      
+      print(str(datetime.datetime.now()) + ": " + scid + " pass " + str(orbit) + " failed somewhere") 
+      metopmon_insert("DELETE FROM processed_passes WHERE scid = %s AND orbit = %s", (scid, orbit))
+      metopmon_insert("DELETE FROM events WHERE scid = %s AND orbit = %s", (scid, orbit))      
 
