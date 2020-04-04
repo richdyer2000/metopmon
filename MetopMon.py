@@ -387,6 +387,8 @@ for mypass in mypasses:
 
   if len(mycheckpasses) == 0:
     
+    #Indicate the processing has started in the database - it can take more than 1 minute to process a pass!
+    metopmon_insert("INSERT INTO processed_passes (scid, orbit, status) VALUES (%s, %s, %s)", (scid, orbit, "STARTED"))
     complete = 0
     print(str(datetime.datetime.now()) + ": " + scid + " pass " + str(orbit) + " is being processed") 
     try:
@@ -412,4 +414,5 @@ for mypass in mypasses:
       metopmon_insert("DELETE FROM events WHERE scid = %s AND orbit = %s", (scid, orbit))      
 
     if complete == 1:
-      metopmon_insert("INSERT INTO processed_passes (scid, orbit) VALUES (%s, %s)", (scid, orbit))
+      print(str(datetime.datetime.now()) + ": " + scid + " pass " + str(orbit) + " processed successfully") 
+      metopmon_insert("UPDATE processed_passes SET status = 'COMPLETED' WHERE scid = %s AND orbit = %s", (scid, orbit))

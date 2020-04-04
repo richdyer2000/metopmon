@@ -128,7 +128,7 @@ def process_messages(mymessages, criticality):
   
   
 #Get List of passes to report
-mysqlstmt = "SELECT * FROM processed_passes p WHERE NOT EXISTS (SELECT 1 FROM notified_passes n WHERE p.scid = n.scid and p.orbit = n.orbit)"
+mysqlstmt = "SELECT * FROM processed_passes p WHERE NOT EXISTS (SELECT 1 FROM notified_passes n WHERE p.scid = n.scid and p.orbit = n.orbit) AND p.status = 'COMPLETED'"
 passes_to_notify = metopmon_read(mysqlstmt, 0)
 
 for i in passes_to_notify:
@@ -161,4 +161,5 @@ for i in passes_to_notify:
     metopmon_insert("DELETE FROM notified_passes WHERE scid = %s AND orbit = %s", (scid, orbit))
 
   if complete == 1:
+    print(str(datetime.datetime.now()) + ": finished processing " + scid + " pass " + str(orbit) ) 
     metopmon_insert("INSERT INTO notified_passes (scid, orbit) VALUES (%s, %s)", (scid, orbit))
