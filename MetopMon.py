@@ -363,7 +363,7 @@ def process_svm(scid, orbit, anx, aos, los, passtype):
 #### MAIN LOOP - GET LIST OF PASSES IN LAST ORBIT, THEN FOR EACH PASS CHECK WHETHER IT HAS BEEN PROCESSED ####
 ##############################################################################################################
 
-mypasses = metopmon_query("SELECT * FROM passes WHERE los BETWEEN DATE_ADD(NOW(), INTERVAL - 110 MINUTE) AND DATE_ADD(NOW(), INTERVAL -9 MINUTE)", 0)
+mypasses = metopmon_query("SELECT * FROM passes WHERE los BETWEEN DATE_ADD(NOW(), INTERVAL - 101 MINUTE) AND NOW()", 0)
 
 for mypass in mypasses:
 
@@ -386,7 +386,7 @@ for mypass in mypasses:
     tries = mycheckpass[0][3]
   
   retryLimit = 30
-  eventsLimit = 20 
+  eventsLimit = 20
   
   #If this is a NEW pass or a FISHY one which has been tried less than retry Limit
   if status == 'NEW' or (status == 'FISHY' and tries < retryLimit):
@@ -422,13 +422,18 @@ for mypass in mypasses:
   #If the Pass is ready, then go for it!
   if status == 'READY':
     
+
     #Indicate the processing has started in the database - it can take more than 1 minute to process a pass!
     metopmon_insert("UPDATE processed_passes SET status = 'STARTED' WHERE scid = %s AND orbit = %s", (scid, orbit))
     complete = 0
     print(str(datetime.datetime.now()) + ": " + scid + " pass " + str(orbit) + " is being processed") 
+    
+    #We may have started processing immediately as events are available, so give 60s for TMREP and TCHIST to catch up.
+    time.sleep(60)    
+    
     try:
       
-      #Process each 'system' one at a time. Apply some basic logic - e.g. don't check TLM if stream has died etc.
+      #Process each 'system' one at a time. Apply some basic logic - e.g. don't check TC if NO TLM etc.
       
       pi = process_pi(scid, orbit, anx, aos, los, passtype) 
       tlm = process_tlm(scid, orbit, anx, aos, los, passtype)  
