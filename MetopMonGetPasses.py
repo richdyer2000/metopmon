@@ -69,11 +69,11 @@ for i in mypasses:
     passtype = 'DEF_ROUT'
   
   #Conditions for AOCS
-  morning_aocs_start = datetime.time(9, 30, 0)
-  morning_aocs_end = datetime.time(11, 10, 0)
-  evening_aocs_start = datetime.time(21, 30, 0)
-  evening_aocs_end = datetime.time(23, 13, 0)
-  if (aos.time() > morning_aocs_start and aos.time() < morning_aocs_end) or (aos.time() > evening_aocs_start and aos.time() < evening_aocs_end):    
+  morning_aocs_start = datetime.time(9, 0, 0)
+  morning_aocs_end = datetime.time(10, 41, 20)
+  evening_aocs_start = datetime.time(21, 0, 0)
+  evening_aocs_end = datetime.time(22, 41, 20)
+  if (anx.time() > morning_aocs_start and anx.time() < morning_aocs_end) or (anx.time() > evening_aocs_start and anx.time() < evening_aocs_end):    
     passtype = 'AOCS'
   
   myconnection = mysql.connector.connect(host="localhost", user="metopmon", passwd="metop1", database="metopmon")

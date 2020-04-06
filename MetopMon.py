@@ -51,7 +51,6 @@ def metopmon_event(myvalues):
 ###################################################################
 #First check stream status - just count events between aos and los
 def process_stream(scid, orbit, anx, aos, los, passtype):
-  oknok = 1
   
   mydb = "g1_events_" + scid.lower() 
   mystream = scid.lower() + "s_nom"
@@ -59,12 +58,9 @@ def process_stream(scid, orbit, anx, aos, los, passtype):
   mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = %s AND eventTime BETWEEN DATE_ADD(%s, INTERVAL -5 MINUTE) AND %s"
   stream = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
 
-  if stream == 0:
-    message = "No events for this pass - possible Stream Crash"
-    metopmon_event((scid, orbit, passtype, aos, "STREAM", message, 4)) 
-    oknok = 0
+
   
-  return (oknok)
+  return (stream)
 
 #########################################################
 #TM Processing - check connection and tm reception status   
@@ -367,9 +363,7 @@ def process_svm(scid, orbit, anx, aos, los, passtype):
 #### MAIN LOOP - GET LIST OF PASSES IN LAST ORBIT, THEN FOR EACH PASS CHECK WHETHER IT HAS BEEN PROCESSED ####
 ##############################################################################################################
 
-mypasses = metopmon_query("SELECT * FROM passes WHERE los BETWEEN DATE_ADD(NOW(), INTERVAL - 116 MINUTE) AND DATE_ADD(NOW(), INTERVAL -15 MINUTE)", 0)
-#mypasses = metopmon_query("SELECT * FROM passes WHERE los < DATE_ADD(NOW(), INTERVAL -15 MINUTE)",0)
-
+mypasses = metopmon_query("SELECT * FROM passes WHERE los BETWEEN DATE_ADD(NOW(), INTERVAL - 110 MINUTE) AND DATE_ADD(NOW(), INTERVAL -9 MINUTE)", 0)
 
 for mypass in mypasses:
 
@@ -380,32 +374,72 @@ for mypass in mypasses:
   los = mypass[4]
   passtype = mypass[5]
 
-  mycheckpasses = metopmon_query("SELECT scid, orbit FROM processed_passes where scid = %s and orbit = %s", (scid, orbit))
+  #Get any matching passes already in processed_passes
+  mycheckpass = metopmon_query("SELECT scid, orbit, status, tries FROM processed_passes where scid = %s and orbit = %s", (scid, orbit))
   
-#  if len(mycheckpasses) > 0:
-#    print(str(datetime.datetime.now()) + ": " + scid + " pass " + str(orbit) + " has already been processed") 
-
-  if len(mycheckpasses) == 0:
+  #This can be a NEW pass, a FISHY pass (i.e. one previously found to be lacking events), or a pass which is being processed    
+  if len(mycheckpass) == 0: 
+    status = 'NEW'
+    tries = 0
+  if len(mycheckpass) > 0:
+    status = mycheckpass[0][2]
+    tries = mycheckpass[0][3]
+  
+  retryLimit = 30
+  eventsLimit = 20 
+  
+  #If this is a NEW pass or a FISHY one which has been tried less than retry Limit
+  if status == 'NEW' or (status == 'FISHY' and tries < retryLimit):
+    eventsActual = process_stream(scid, orbit, anx, aos, los, passtype)
+    #If we see more than 20 entries between aos and los, the pass is ready to process
+    if eventsActual >= eventsLimit:      
+      if status == 'NEW':
+        metopmon_insert("INSERT INTO processed_passes (scid, orbit, status, tries) VALUES (%s, %s, %s, %s)", (scid, orbit, 'READY', 1)) 
+      elif status == 'FISHY':
+        metopmon_insert("UPDATE processed_passes SET status = 'READY' WHERE scid = %s AND orbit = %s", (scid, orbit))   
+      status = 'READY'
+      print(str(datetime.datetime.now()) + ": " + scid + " pass " + str(orbit) + " is ready to be processed")          
+    #if we have less than 20...  
+    elif eventsActual < eventsLimit:
+      #....and this is a new pass, then insert it into processed passes with tries = 1.....
+      if status == 'NEW':
+        metopmon_insert("INSERT INTO processed_passes (scid, orbit, status, tries) VALUES (%s, %s, %s, %s)", (scid, orbit, 'FISHY', 1))
+      #....otherwise, increment the 'tries' counter      
+      elif status == 'FISHY':
+        tries = tries + 1
+        metopmon_insert("UPDATE processed_passes SET tries = %s WHERE scid = %s AND orbit = %s", (tries, scid, orbit))
+      print(str(datetime.datetime.now()) + ": " + scid + " pass " + str(orbit) + " is fishy after "  + str(tries) +  " tries") 
+  
+  #If this is a FISHY pass which has been tried as many times as the retry Limit    
+  if status == 'FISHY' and tries >= retryLimit:
+    status == 'FAILED'
+    message = "Not enough events for this pass after " + str(retryLimit) + " retries"
+    metopmon_event((scid, orbit, passtype, aos, "STREAM", message, 3)) 
+    metopmon_insert("UPDATE processed_passes SET status = 'FAILED' WHERE scid = %s AND orbit = %s", (scid, orbit))
+    print(str(datetime.datetime.now()) + ": " + scid + " pass " + str(orbit) + " has failed after "  + str(tries) +  " tries")  
+     
+  
+  #If the Pass is ready, then go for it!
+  if status == 'READY':
     
     #Indicate the processing has started in the database - it can take more than 1 minute to process a pass!
-    metopmon_insert("INSERT INTO processed_passes (scid, orbit, status) VALUES (%s, %s, %s)", (scid, orbit, "STARTED"))
+    metopmon_insert("UPDATE processed_passes SET status = 'STARTED' WHERE scid = %s AND orbit = %s", (scid, orbit))
     complete = 0
     print(str(datetime.datetime.now()) + ": " + scid + " pass " + str(orbit) + " is being processed") 
     try:
       
       #Process each 'system' one at a time. Apply some basic logic - e.g. don't check TLM if stream has died etc.
-      stream = process_stream(scid, orbit, anx, aos, los, passtype)
+      
       pi = process_pi(scid, orbit, anx, aos, los, passtype) 
-      if stream == 1:
-        tlm = process_tlm(scid, orbit, anx, aos, los, passtype)  
-      if stream == 1 and tlm == 1:
+      tlm = process_tlm(scid, orbit, anx, aos, los, passtype)  
+      if tlm == 1:
         tc = process_tc(scid, orbit, anx, aos, los, passtype)
         sys = process_sys(scid, orbit, anx, aos, los, passtype)
-      if stream == 1 and tlm == 1 and sys == 1:
+      if tlm == 1 and sys == 1:
         plm = process_plm(scid, orbit, anx, aos, los, passtype)  
         svm = process_svm(scid, orbit, anx, aos, los, passtype)
         ins = process_ins(scid, orbit, anx, aos, los, passtype)        
-      if stream == 1 and tlm == 1 and sys == 1 and passtype <> "DEF_ROUT":
+      if tlm == 1 and sys == 1 and passtype <> "DEF_ROUT":
         icureps = process_icureports(scid, orbit, anx, aos, los, passtype) 
       complete = 1
     except:
