@@ -72,19 +72,19 @@ def process_tlm(scid, orbit, anx, aos, los, passtype):
   mystream = scid.lower() + "s_nom"
   myvalues = (mystream, aos, los)
   
-  mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = %s AND code = 2110 AND eventTime BETWEEN DATE_ADD(%s, INTERVAL -5 MINUTE) AND %s"
+  mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = %s AND code = 2702 AND message LIKE 'TM connection success%' AND eventTime BETWEEN DATE_ADD(%s, INTERVAL -5 MINUTE) AND %s"
   StatCon = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
   mysqlstmt = "SELECT COUNT(*) FROM entries WHERE stream = %s AND code = 2111 AND eventTime BETWEEN DATE_ADD(%s, INTERVAL -1 MINUTE) AND %s"
   TmRx = epsmcf_query(mydb, mysqlstmt, myvalues)[0][0]
   
-  if StatCon > 0 and TmRx > 0: #TM OK
+  if TmRx > 0: #TM OK
     message = "TM Connection OK"
     metopmon_event((scid, orbit, passtype, aos, "TM", message, 1))
-  if StatCon == 0: #No TM Connection to CDA
+  elif StatCon == 0: #No TM Connection to CDA
     message = "No TM Connection to CDA"
     metopmon_event((scid, orbit, passtype, aos, "TM", message, 3))
     oknok = 0
-  if StatCon > 0 and TmRx == 0: #TM Connection to CDA, but no TLM Received - potential NO TLM!!   
+  elif StatCon > 0 and TmRx == 0: #TM Connection to CDA, but no TLM Received - potential NO TLM!!   
     message = "No TM From Spacecraft despite successful connection to CDA"
     metopmon_event((scid, orbit, passtype, aos, "TM", message, 4))
     oknok = 0
