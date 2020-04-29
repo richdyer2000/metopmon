@@ -68,13 +68,26 @@ for i in mypasses:
   if (anx.time() > defrout_start and anx.time() < defrout_end):
     passtype = 'DEF_ROUT'
   
-  #Conditions for AOCS
-  morning_aocs_start = datetime.time(9, 0, 0)
-  morning_aocs_end = datetime.time(10, 41, 20)
-  evening_aocs_start = datetime.time(21, 0, 0)
-  evening_aocs_end = datetime.time(22, 41, 20)
-  if (anx.time() > morning_aocs_start and anx.time() < morning_aocs_end) or (anx.time() > evening_aocs_start and anx.time() < evening_aocs_end):    
-    passtype = 'AOCS'
+  ########################################################################################################################
+  #Conditions for AOCS - this is a bit more tricky as we have to show that there is exctly one more LOS before 01:00/13:00
+  #First get the next 2 los times
+  nextlos = 0
+  nextnextlos = 0
+  for k in mypasses:
+    if k[0] == scid and k[1] == orbit + 1:
+      nextlos = k[3]
+    if k[0] == scid and k[1] == orbit + 2:
+      nextnextlos = k[3]
+  
+  if nextlos != 0 and nextnextlos != 0:   
+    morning_aocs_exec = datetime.time(13, 0, 0)
+    evening_aocs_exec = datetime.time(1, 0, 0)
+    #First the Morning AOCS Pass
+    if (nextnextlos.time() > morning_aocs_exec and nextlos.time() < morning_aocs_exec):    
+      passtype = 'AOCS'
+    #Then the Evening AOCS Pass
+    if (nextnextlos.time() > evening_aocs_exec and nextnextlos.time() < morning_aocs_exec and (nextlos.time() < evening_aocs_exec or nextlos.time() > morning_aocs_exec)):    
+      passtype = 'AOCS'  
   
   myconnection = mysql.connector.connect(host="localhost", user="metopmon", passwd="metop1", database="metopmon")
   mycursor = myconnection.cursor() 

@@ -141,10 +141,10 @@ def process_tc(scid, orbit, anx, aos, los, passtype):
     #Check for queue opening and queue errors
     mydb = "g1_events_" + scid.lower() 
     mystream = scid.lower() + "s_nom"
-    myqueue = "%" + queueAlpha + "%"
+    myqueue = "Command queue " + queueAlpha + " started"
 
     myvalues = (mystream, myqueue, aos, los)
-    mysqlstmt_queueOpen = "SELECT COUNT(*) FROM entries WHERE stream = %s AND code = 2702 AND message LIKE %s AND eventTime BETWEEN %s AND %s"
+    mysqlstmt_queueOpen = "SELECT COUNT(*) FROM entries WHERE stream = %s AND code = 2802 AND message LIKE %s AND eventTime BETWEEN %s AND %s"
     mysqlstmt_queueErrors = "SELECT COUNT(*) FROM entries WHERE stream = %s AND (code = 2803 OR code = 2809) AND message LIKE %s AND eventTime BETWEEN %s AND %s"
     QueueErrors = epsmcf_query(mydb, mysqlstmt_queueErrors, myvalues)[0][0]
     QueueOpen = epsmcf_query(mydb, mysqlstmt_queueOpen, myvalues)[0][0]
