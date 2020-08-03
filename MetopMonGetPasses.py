@@ -96,4 +96,23 @@ for i in mypasses:
   mycursor.execute(mysqlstmt, myvalues)
   myconnection.commit()
   
+#Check that the Insertion has completed
+numpasses = 0
+while numpasses != len(mypasses):
+  myconnection = mysql.connector.connect(host="localhost", user="metopmon", passwd="metop1", database="metopmon")
+  mycursor = myconnection.cursor() 
+  mycursor.execute("Select * from passes")
+  ingestedpasses = mycursor.fetchall()
+  numpasses = len(ingestedpasses)
+  time.sleep(5)
+    
+  
+#Finally, we have to clean up the processed passes and notified passes - they both need to remain small
+mysqlstmt = "DELETE p FROM processed_passes p WHERE NOT EXISTS (SELECT 1 FROM passes n WHERE p.scid = n.scid and p.orbit = n.orbit)"
+mycursor.execute(mysqlstmt)
+myconnection.commit()
+mysqlstmt = "DELETE p FROM notified_passes p WHERE NOT EXISTS (SELECT 1 FROM passes n WHERE p.scid = n.scid and p.orbit = n.orbit)"
+mycursor.execute(mysqlstmt)
+myconnection.commit()
+  
   
