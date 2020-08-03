@@ -141,6 +141,7 @@ for i in passes_to_notify:
  
   try:
     #Get All the Messages for this Orbit
+    metopmon_insert("INSERT INTO notified_passes (scid, orbit) VALUES (%s, %s)", (scid, orbit))
     mysqlstmt = "Select scid, orbit, passtype, aos, subsystem, message, criticality FROM events WHERE scid = %s AND orbit = %s"
     myvalues = (scid, orbit)
     mymessages = metopmon_read(mysqlstmt, myvalues)
@@ -162,4 +163,4 @@ for i in passes_to_notify:
 
   if complete == 1:
     print(str(datetime.datetime.now()) + ": finished processing " + scid + " pass " + str(orbit) ) 
-    metopmon_insert("INSERT INTO notified_passes (scid, orbit) VALUES (%s, %s)", (scid, orbit))
+
